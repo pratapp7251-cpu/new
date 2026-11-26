@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ToolYard Admin Uploader — Multi-Brand & Spec Catalogue</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .surface-card { background-color: #0f172a; border-color: #1e293b; }
+    .surface-subtle { background-color: #1e293b; border-color: #334155; }
+    .blueprint-bg {
+      background-image: radial-gradient(#334155 1px, transparent 1px);
+      background-size: 12px 12px;
+      background-color: #090d16;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+
+  <!-- Header -->
+  <header class="sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <span class="px-2.5 py-1 rounded bg-amber-500 text-slate-950 font-black text-xs tracking-wider">TY ADMIN</span>
+        <div>
+          <div class="font-bold text-sm sm:text-base leading-tight">Catalogue & Spec Manager</div>
+          <div class="text-[11px] text-slate-400">Categories • Subcategories • Brands • Custom Specs • GST & Discounts</div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2.5">
+        <a href="index.html"
+          class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 transition">
+          View Storefront
+        </a>
+        <button id="lockSessionBtn" type="button" onclick="lockAdminSession()"
+          class="hidden items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-950/70 hover:bg-red-900 border border-red-800/70 text-red-200 text-xs font-semibold transition">
+          Lock
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Toast Container -->
+  <div id="toastContainer" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2"></div>
+
+  <!-- PIN Gate -->
+  <section id="pinGateSection" class="max-w-md mx-auto mt-16 px-4">
+    <form onsubmit="verifyAdminPin(event)" class="rounded-2xl border surface-card p-6 shadow-xl space-y-4">
+      <div>
+        <h1 class="text-lg font-bold text-white">Unlock Admin Workspace</h1>
+        <p class="text-xs text-slate-400 mt-1">Enter your admin PIN to add or edit products and variants.</p>
+      </div>
+      <div>
+        <input id="adminPinInput" type="password" placeholder="Enter PIN (admin123)"
+          class="w-full px-3.5 py-2.5 rounded-lg bg-slate-800 border border-slate-700 text-sm text-white focus:outline-none focus:border-amber-500" />
+        <p id="pinErrorMsg" class="hidden text-xs text-red-400 mt-1.5">Incorrect PIN. Try again.</p>
+      </div>
+      <button type="submit"
+        class="w-full py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-sm transition">
+        Unlock Workspace
+      </button>
+    </form>
+  </section>
+
+  <!-- Main Admin Workspace -->
+  <main id="adminWorkspace" class="hidden max-w-7xl mx-auto px-4 py-6">
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+      <!-- Left Column: Product & Variant Form -->
+      <section class="lg:col-span-6 rounded-2xl border surface-card p-5 space-y-5 shadow-lg">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div>
+            <span id="formModeBadge" class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 text-[10px] font-bold uppercase">
+              New Product Entry
+            </span>
+            <h1 id="formHeading" class="text-lg font-bold text-white mt-1">Upload Tool to Catalogue</h1>
+          </div>
+          <button id="cancelEditBtn" type="button" onclick="resetUploadForm()"
+            class="hidden px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-300">
+            Cancel Edit
+          </button>
+        </div>
+
+        <!-- Quick URL Scraper -->
+        <div class="p-3 rounded-xl surface-subtle border space-y-2">
+          <label for="scrapeUrlInput" class="block text-xs font-semibold text-amber-400">
+            Auto-Fetch from Product URL (Optional)
+          </label>
+          <div class="flex gap-2">
+            <input id="scrapeUrlInput" type="url" placeholder="https://example.com/product-page"
+              class="flex-1 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-500" />
+            <button id="scrapeBtn" type="button" onclick="importFromWebsiteUrl()"
+              class="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold whitespace-nowrap transition">
+              Fetch Details
+            </button>
+          </div>
+        </div>
+
+        <form id="toolUploadForm" onsubmit="saveToolEntry(event)" class="space-y-4">
+          <input id="editingToolId" type="hidden" value="" />
+
+          <!-- Main Category + Subcategory -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label for="toolCategorySelect" class="text-xs font-semibold text-slate-300">Main Category</label>
+                <button type="button" onclick="toggleCustomCategoryBox()" class="text-[11px] text-amber-400 hover:underline">
+                  + New Category
+                </button>
+              </div>
+              <select id="toolCategorySelect" onchange="renderSubCategoryDatalist()"
+                class="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-500">
+              </select>
+              <div id="customCategoryBox" class="hidden mt-2 flex gap-1.5">
+                <input id="newCategoryNameInput" type="text" placeholder="e.g. Safety Products"
+                  class="flex-1 px-2.5 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs text-white" />
+                <button type="button" onclick="addCustomCategory()"
+                  class="px-2.5 py-1.5 rounded bg-amber-500 text-slate-950 text-xs font-bold">Add</button>
+              </div>
+            </div>
+
+            <div>
+              <label for="toolSubCategoryInput" class="block text-xs font-semibold text-slate-300 mb-1">
+                Subcategory
+              </label>
+              <input id="toolSubCategoryInput" list="subCategorySuggestions" type="text"
+                placeholder="e.g. Safety Shoes, Cement, Wrenches"
+                class="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-500" />
+              <datalist id="subCategorySuggestions"></datalist>
+            </div>
+          </div>
+
+          <!-- Brand + Product Name -->
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label for="toolBrandInput" class="block text-xs font-semibold text-slate-300 mb-1">Brand</label>
+              <input id="toolBrandInput" list="brandSuggestions" type="text" value="Taparia"
+                placeholder="e.g. Taparia, Karam, 3M"
+                class="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-500" />
+              <datalist id="brandSuggestions"></datalist>
+            </div>
+
+            <div class="sm:col-span-2">
+              <label for="toolNameInput" class="block text-xs font-semibold text-slate-300 mb-1">Product Name *</label>
+              <input id="toolNameInput" type="text" required
+                placeholder="e.g. Adjustable Wrench 1170 / Steel Toe Safety Shoe"
+                class="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-500" />
+            </div>
+          </div>
+
+          <!-- Series / Standard + Default Finish -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label for="toolSeriesInput" class="block text-xs font-semibold text-slate-300 mb-1">
+                Series / IS Standard / HSN
+              </label>
+              <input id="toolSeriesInput" type="text" placeholder="e.g. IS 6149:2025 | HSN 82041210"
+                class="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-500" />
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label for="toolFinishInput" class="text-xs font-semibold text-slate-300">Default Finish</label>
+                <button type="button" onclick="toggleNewFinishBox()" class="text-[11px] text-amber-400 hover:underline">
+                  + Add Finish
+                </button>
+              </div>
+              <select id="toolFinishInput"
+                class="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-500">
+              </select>
+              <div id="newFinishBox" class="hidden mt-2 flex gap-1.5">
+                <input id="newFinishInput" type="text" placeholder="e.g. Phosphate Finish"
+                  class="flex-1 px-2.5 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs text-white" />
+                <button type="button" onclick="savePersonalFinish()"
+                  class="px-2.5 py-1.5 rounded bg-amber-500 text-slate-950 text-xs font-bold">Save</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Default Discount % + GST % -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label for="toolDiscountInput" class="block text-xs font-semibold text-slate-300 mb-1">
+                Discount (%)
+              </label>
+              <input id="toolDiscountInput" type="number" step="0.01" min="0" max="100" value="0"
+                oninput="recalculateAllVariantPrices()"
+                class="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-xs font-mono text-white focus:outline-none focus:border-amber-500" />
+            </div>
+
+            <div>
+              <label for="toolGstInput" class="block text-xs font-semibold text-slate-300 mb-1">
+                GST Rate (%)
+              </label>
+              <select id="toolGstInput" onchange="recalculateAllVariantPrices()"
+                class="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-xs font-mono text-white focus:outline-none focus:border-amber-500">
+                <option value="0">0% GST</option>
+                <option value="5">5% GST</option>
+                <option value="12">12% GST</option>
+                <option value="18" selected>18% GST</option>
+                <option value="28">28% GST</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Description -->
+          <div>
+            <label for="toolDescInput" class="block text-xs font-semibold text-slate-300 mb-1">
+              Technical Description / Specifications
+            </label>
+            <textarea id="toolDescInput" rows="2" placeholder="Material grade, ISI certification, application notes..."
+              class="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-500"></textarea>
+          </div>
+
+          <!-- Image Upload & URL -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <label class="text-xs font-semibold text-slate-300">Product Image</label>
+              <button id="removeImgBtn" type="button" onclick="clearUploadedImage()"
+                class="hidden text-[11px] text-red-400 hover:underline">Remove Image</button>
+            </div>
+            <div id="dropZone" onclick="document.getElementById('toolImageFile').click()"
+              class="cursor-pointer rounded-xl border-2 border-dashed border-slate-700 hover:border-amber-500 p-4 text-center transition">
+              <img id="imagePreviewEl" src="" alt="Preview" class="hidden mx-auto max-h-32 object-contain mb-2" />
+              <div id="imagePlaceholderPrompt" class="text-xs text-slate-400">
+                Click or drag & drop image here (auto-compressed & saved locally by product name)
+              </div>
+              <input id="toolImageFile" type="file" accept="image/*" onchange="handleImageFileSelect(event)" class="hidden" />
+            </div>
+            <input id="toolImageUrlInput" type="text" oninput="handleImageUrlInput(this.value)"
+              placeholder="Or paste image URL (https://... or /images/...)"
+              class="w-full px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-500" />
+          </div>
+
+          <!-- Custom Product-Specific Columns (e.g., Foot Size, Opening Size) -->
+          <div class="p-3 rounded-xl surface-subtle border space-y-2.5">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div class="text-xs font-bold text-amber-400">Custom Spec Columns for This Product</div>
+                <div class="text-[11px] text-slate-400">
+                  Add fields like <span class="text-slate-200">Foot Size</span>, <span class="text-slate-200">Opening Size</span>, or <span class="text-slate-200">Jaw Capacity</span>
+                </div>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <input id="newCustomColInput" type="text" placeholder="Column name (e.g. Foot Size)"
+                  class="px-2.5 py-1 rounded bg-slate-900 border border-slate-700 text-xs text-white w-40" />
+                <button type="button" onclick="addCustomSpecColumn()"
+                  class="px-2.5 py-1 rounded bg-slate-700 hover:bg-slate-600 text-xs font-bold text-amber-300">
+                  + Add Column
+                </button>
+              </div>
+            </div>
+            <div id="customSpecColumnsList" class="flex flex-wrap gap-1.5"></div>
+          </div>
+
+          <!-- Bulk Size Generator -->
+          <div class="p-3 rounded-xl surface-subtle border space-y-2">
+            <label for="bulkSizesInput" class="block text-xs font-semibold text-slate-300">
+              Quick Bulk Size Generator (Comma-separated)
+            </label>
+            <div class="flex gap-2">
+              <input id="bulkSizesInput" type="text" placeholder="e.g. 150mm, 200mm, 250mm or UK 6, UK 7, UK 8"
+                class="flex-1 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-500" />
+              <button type="button" onclick="bulkGenerateSizeRows()"
+                class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs font-bold text-white">
+                Generate Rows
+              </button>
+            </div>
+          </div>
+
+          <!-- Variant Rows -->
+          <div class="space-y-2.5">
+            <div class="flex items-center justify-between">
+              <label class="text-xs font-bold text-white">Variants, Pricing & Specs</label>
+              <button type="button" onclick="addVariantRow()"
+                class="px-3 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-bold">
+                + Add Variant Row
+              </button>
+            </div>
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+  <span class="text-xs font-bold uppercase tracking-wide text-slate-300">
+    Size / Variant Pricing &amp; Specs
+  </span>
+
+  <button id="bulkToggleGstModeBtn" type="button" onclick="toggleAllVariantsTaxMode()"
+    class="px-3 py-1.5 rounded-lg border border-amber-500/50 bg-slate-900 hover:bg-amber-500/15 text-amber-300 text-xs font-bold transition">
+    Set All Sizes: Incl. GST
+  </button>
+</div>
+            <div id="variantsContainer" class="space-y-2.5"></div>
+          </div>
+
+          <!-- Submit Button -->
+          <button type="submit"
+            class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-sm shadow-lg transition">
+            <span id="submitBtnText">Save Tool & Publish to Storefront</span>
+          </button>
+        </form>
+      </section>
+
+      <!-- Right Column: Saved SQLite Inventory -->
+      <section class="lg:col-span-6 rounded-2xl border surface-card p-5 space-y-4 shadow-lg">
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+          <div class="flex items-center gap-2">
+            <h2 class="text-base font-bold text-white">Saved Catalogue Items</h2>
+            <span id="storeCountBadge" class="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500 text-slate-950">0</span>
+          </div>
+          <button type="button" onclick="fetchProductsFromSQLite()"
+            class="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200">
+            Refresh
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <input id="adminSearchInput" type="text" oninput="renderAdminInventory()"
+            placeholder="Search name, brand, SKU, spec..."
+            class="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-500" />
+          <select id="adminCatFilter" onchange="renderAdminInventory()"
+            class="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-500">
+            <option value="ALL">All Categories</option>
+          </select>
+        </div>
+
+        <div class="overflow-x-auto rounded-xl border border-slate-800">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead class="bg-slate-900/90 text-slate-400 border-b border-slate-800">
+              <tr>
+                <th class="py-2.5 px-3">Product & Brand</th>
+                <th class="py-2.5 px-3">Category</th>
+                <th class="py-2.5 px-3">Pricing & Variants</th>
+                <th class="py-2.5 px-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="adminInventoryBody" class="divide-y divide-slate-800/70"></tbody>
+          </table>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <script src="admin.js"></script>
+</body>
+</html>

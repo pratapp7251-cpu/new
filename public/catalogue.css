@@ -1,0 +1,84 @@
+/* public/catalogue.css */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  background-color: #f4f5f7;
+  color: #1f2937;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+img,
+svg,
+video,
+canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+select,
+select option {
+  background-color: #ffffff;
+  color: #1f2937;
+  color-scheme: light;
+}
+
+.top-seller-ribbon {
+  background: linear-gradient(135deg, #1d6fd8 0%, #1557b0 100%);
+  clip-path: polygon(0 0, 100% 0, 88% 100%, 0% 100%);
+}
+
+.brand-badge {
+  background-color: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+
+.discount-badge {
+  background-color: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+}
+
+.spec-chip {
+  background-color: #f8fafc;
+  color: #334155;
+  border: 1px solid #e2e8f0;
+}
+
+/* Keep wide tables and horizontal strips contained on narrow phone screens */
+.table-wrap,
+.overflow-x-auto {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 640px) {
+  /* Prevent mobile browsers from auto-zooming on input/select focus */
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* Compact chips and badges so cards do not stretch horizontally */
+  .spec-chip,
+  .brand-badge,
+  .discount-badge {
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Keep ribbon compact on small cards */
+  .top-seller-ribbon {
+    font-size: 10px;
+    padding-right: 10px;
+  }
+}
