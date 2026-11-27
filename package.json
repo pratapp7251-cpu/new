@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "@libsql/client": "^0.18.0",
     "axios": "^1.21.1",
     "xlsx": "^0.18.5"
   }

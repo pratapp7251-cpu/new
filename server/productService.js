@@ -1,26 +1,21 @@
 // server/productService.js
 const { getDb, saveToDisk } = require('./db');
 
-function rowsFromStmt(stmt) {
-  const rows = [];
-  while (stmt.step()) {
-    rows.push(stmt.getAsObject());
-  }
-  stmt.free();
-  return rows;
-}
-
-function ensureSchemaColumns(db) {
-  [
+async function ensureSchemaColumns(db) {
+  const productCols = [
     `sub_category TEXT DEFAULT ''`,
     `brand TEXT DEFAULT 'Taparia'`,
     `gst_percent REAL DEFAULT 18`,
     `discount_percent REAL DEFAULT 0`
-  ].forEach(colDef => {
-    try { db.run(`ALTER TABLE products ADD COLUMN ${colDef}`); } catch (_) {}
-  });
+  ];
 
-  [
+  for (const colDef of productCols) {
+    try {
+      await db.execute(`ALTER TABLE products ADD COLUMN ${colDef}`);
+    } catch (_) {}
+  }
+
+  const variantCols = [
     `opening TEXT DEFAULT ''`,
     `finish TEXT DEFAULT ''`,
     `packaging TEXT DEFAULT ''`,
@@ -31,9 +26,13 @@ function ensureSchemaColumns(db) {
     `price REAL DEFAULT 0`,
     `stock TEXT DEFAULT 'In Stock'`,
     `custom_specs TEXT DEFAULT '{}'`
-  ].forEach(colDef => {
-    try { db.run(`ALTER TABLE product_variants ADD COLUMN ${colDef}`); } catch (_) {}
-  });
+  ];
+
+  for (const colDef of variantCols) {
+    try {
+      await db.execute(`ALTER TABLE product_variants ADD COLUMN ${colDef}`);
+    } catch (_) {}
+  }
 }
 
 function safeParseJson(val) {
@@ -49,37 +48,40 @@ function safeParseJson(val) {
 
 async function getAllSortedProducts({ category = 'ALL', search = '' } = {}) {
   const db = await getDb();
-  ensureSchemaColumns(db);
+  await ensureSchemaColumns(db);
 
   let sql = `SELECT * FROM products WHERE 1=1`;
-  const params = [];
+  const args = [];
 
   if (category && category !== 'ALL') {
     sql += ` AND category_name = ?`;
-    params.push(category);
+    args.push(category);
   }
 
   if (search.trim()) {
     sql += ` AND (LOWER(name) LIKE ? OR LOWER(brand) LIKE ? OR LOWER(sub_category) LIKE ? OR LOWER(series) LIKE ? OR LOWER(finish) LIKE ? OR LOWER(description) LIKE ?)`;
     const term = `%${search.trim().toLowerCase()}%`;
-    params.push(term, term, term, term, term, term);
+    args.push(term, term, term, term, term, term);
   }
 
   sql += ` ORDER BY category_name ASC, name ASC, created_at DESC`;
 
-  const prodStmt = db.prepare(sql);
-  prodStmt.bind(params);
-  const products = rowsFromStmt(prodStmt);
+  const prodRes = await db.execute({ sql, args });
+  const products = prodRes.rows || [];
 
-  return products.map(p => {
-    const varStmt = db.prepare(`
-      SELECT size, opening, finish, packaging, sku, mrp, discount_percent, gst_percent, price_tax_mode, price, stock, custom_specs
-      FROM product_variants
-      WHERE product_id = ?
-      ORDER BY id ASC
-    `);
-    varStmt.bind([p.id]);
-    const variants = rowsFromStmt(varStmt).map(v => ({
+  const result = [];
+  for (const p of products) {
+    const varRes = await db.execute({
+      sql: `
+        SELECT size, opening, finish, packaging, sku, mrp, discount_percent, gst_percent, price_tax_mode, price, stock, custom_specs
+        FROM product_variants
+        WHERE product_id = ?
+        ORDER BY id ASC
+      `,
+      args: [p.id]
+    });
+
+    const variants = (varRes.rows || []).map(v => ({
       size: v.size || 'Standard',
       opening: v.opening || '',
       finish: v.finish || '',
@@ -93,20 +95,23 @@ async function getAllSortedProducts({ category = 'ALL', search = '' } = {}) {
       stock: v.stock || 'In Stock',
       custom_specs: safeParseJson(v.custom_specs)
     }));
-    return {
+
+    result.push({
       ...p,
       brand: p.brand || 'Taparia',
       sub_category: p.sub_category || '',
       discount_percent: Number(p.discount_percent) || 0,
       gst_percent: Number(p.gst_percent ?? 18) || 0,
       variants
-    };
-  });
+    });
+  }
+
+  return result;
 }
 
 async function createProduct(tool) {
   const db = await getDb();
-  ensureSchemaColumns(db);
+  await ensureSchemaColumns(db);
 
   const id = tool.id || `tool-${Date.now()}`;
   const categoryName = tool.category || tool.category_name || 'Uncategorized';
@@ -144,39 +149,86 @@ async function createProduct(tool) {
     };
   });
 
-  db.run(`INSERT OR IGNORE INTO categories (name) VALUES (?)`, [categoryName]);
-  db.run(
-    `INSERT OR REPLACE INTO products (id, category_name, sub_category, brand, name, series, finish, discount_percent, gst_percent, description, image)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, categoryName, subCategory, brand, tool.name, tool.series || '', defaultFinish, discountPct, defaultGstPct, tool.description || '', tool.image || '']
-  );
+  await db.execute({
+    sql: `INSERT OR IGNORE INTO categories (name) VALUES (?)`,
+    args: [categoryName]
+  });
 
-  db.run(`DELETE FROM product_variants WHERE product_id = ?`, [id]);
+  await db.execute({
+    sql: `
+      INSERT OR REPLACE INTO products (id, category_name, sub_category, brand, name, series, finish, discount_percent, gst_percent, description, image)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    args: [
+      id,
+      categoryName,
+      subCategory,
+      brand,
+      tool.name,
+      tool.series || '',
+      defaultFinish,
+      discountPct,
+      defaultGstPct,
+      tool.description || '',
+      tool.image || ''
+    ]
+  });
+
+  await db.execute({
+    sql: `DELETE FROM product_variants WHERE product_id = ?`,
+    args: [id]
+  });
+
   for (const v of variants) {
-    db.run(
-      `INSERT INTO product_variants (product_id, size, opening, finish, packaging, sku, mrp, discount_percent, gst_percent, price_tax_mode, price, stock, custom_specs)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, v.size, v.opening, v.finish, v.packaging, v.sku, v.mrp, v.discount_percent, v.gst_percent, v.price_tax_mode, v.price, v.stock, v.custom_specs]
-    );
+    await db.execute({
+      sql: `
+        INSERT INTO product_variants (product_id, size, opening, finish, packaging, sku, mrp, discount_percent, gst_percent, price_tax_mode, price, stock, custom_specs)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        id,
+        v.size,
+        v.opening,
+        v.finish,
+        v.packaging,
+        v.sku,
+        v.mrp,
+        v.discount_percent,
+        v.gst_percent,
+        v.price_tax_mode,
+        v.price,
+        v.stock,
+        v.custom_specs
+      ]
+    });
   }
 
-  saveToDisk();
+  await saveToDisk();
   const all = await getAllSortedProducts();
   return all.find(p => p.id === id);
 }
 
 async function deleteProduct(id) {
   const db = await getDb();
-  ensureSchemaColumns(db);
-  db.run(`DELETE FROM product_variants WHERE product_id = ?`, [id]);
-  db.run(`DELETE FROM products WHERE id = ?`, [id]);
-  saveToDisk();
+  await ensureSchemaColumns(db);
+  await db.execute({
+    sql: `DELETE FROM product_variants WHERE product_id = ?`,
+    args: [id]
+  });
+  await db.execute({
+    sql: `DELETE FROM products WHERE id = ?`,
+    args: [id]
+  });
+  await saveToDisk();
 }
 
 async function getSortedCategories() {
   const db = await getDb();
-  const stmt = db.prepare(`SELECT name FROM categories ORDER BY name ASC`);
-  return rowsFromStmt(stmt).map(r => r.name);
+  const res = await db.execute({
+    sql: `SELECT name FROM categories ORDER BY name ASC`,
+    args: []
+  });
+  return (res.rows || []).map(r => r.name);
 }
 
 module.exports = { getAllSortedProducts, createProduct, deleteProduct, getSortedCategories };
