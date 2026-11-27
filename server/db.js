@@ -1,31 +1,75 @@
 // server/db.js
 const path = require('path');
 const fs = require('fs');
-const { createClient } = require('@libsql/client');
+const { createClient } = require('@libsql/client/web');
+const initSqlJs = require('sql.js');
 
 const dataDir = path.join(__dirname, '..', 'data');
 const dbFile = path.join(dataDir, 'toolyard.db');
 
-let dbInstance = null;
+let remoteClient = null;
+let localSqlJsDb = null;
 let initialized = false;
 
-function createClientInstance() {
-  if (process.env.TURSO_DATABASE_URL) {
-    return createClient({
-      url: process.env.TURSO_DATABASE_URL,
-      authToken: process.env.TURSO_AUTH_TOKEN,
-    });
+function isTursoConfigured() {
+  return Boolean(process.env.TURSO_DATABASE_URL);
+}
+
+function createAdapter(db, mode) {
+  if (mode === 'turso') {
+    return {
+      mode: 'turso',
+      execute: (stmt) =>
+        typeof stmt === 'string' ? db.execute(stmt) : db.execute(stmt),
+      batch: (stmts, txnMode = 'write') => db.batch(stmts, txnMode),
+    };
   }
 
+  // Local sql.js fallback adapter with an execute({ sql, args }) interface
+  return {
+    mode: 'sqljs',
+    execute: async (stmt) => {
+      const sql = typeof stmt === 'string' ? stmt : stmt.sql;
+      const args = typeof stmt === 'string' ? [] : (stmt.args || []);
+      const trimmed = sql.trim().toUpperCase();
+
+      if (trimmed.startsWith('SELECT') || trimmed.startsWith('PRAGMA')) {
+        const stmtObj = db.prepare(sql);
+        stmtObj.bind(args);
+        const rows = [];
+        const columns = stmtObj.getColumnNames();
+        while (stmtObj.step()) {
+          const obj = stmtObj.getAsObject();
+          rows.push(columns.map((col) => obj[col]));
+        }
+        stmtObj.free();
+        return { rows, columns };
+      }
+
+      const stmtObj = db.prepare(sql);
+      stmtObj.bind(args);
+      stmtObj.step();
+      stmtObj.free();
+      saveLocalDb(db);
+      return { rows: [], columns: [] };
+    },
+    batch: async (stmts) => {
+      for (const s of stmts) {
+        await createAdapter(db, 'sqljs').execute(s);
+      }
+    },
+  };
+}
+
+function saveLocalDb(db) {
+  if (!db) return;
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
-
-  const localUrl = process.env.LOCAL_DB_URL || `file:${dbFile}`;
-  return createClient({ url: localUrl });
+  fs.writeFileSync(dbFile, Buffer.from(db.export()));
 }
 
-async function runMigrations(db) {
+async function runMigrations(adapter) {
   const productCols = [
     `sub_category TEXT DEFAULT ''`,
     `brand TEXT DEFAULT 'Taparia'`,
@@ -35,10 +79,8 @@ async function runMigrations(db) {
 
   for (const colDef of productCols) {
     try {
-      await db.execute(`ALTER TABLE products ADD COLUMN ${colDef}`);
-    } catch (_) {
-      // Column already exists
-    }
+      await adapter.execute(`ALTER TABLE products ADD COLUMN ${colDef}`);
+    } catch (_) {}
   }
 
   const variantCols = [
@@ -48,26 +90,21 @@ async function runMigrations(db) {
     `mrp REAL DEFAULT 0`,
     `discount_percent REAL DEFAULT 0`,
     `gst_percent REAL DEFAULT 18`,
+    `price_tax_mode TEXT DEFAULT 'ex'`,
     `custom_specs TEXT DEFAULT '{}'`,
   ];
 
   for (const colDef of variantCols) {
     try {
-      await db.execute(`ALTER TABLE product_variants ADD COLUMN ${colDef}`);
-    } catch (_) {
-      // Column already exists
-    }
+      await adapter.execute(`ALTER TABLE product_variants ADD COLUMN ${colDef}`);
+    } catch (_) {}
   }
 }
 
-async function initSchema(db) {
+async function initSchema(adapter) {
   if (initialized) return;
 
-  try {
-    await db.execute('PRAGMA foreign_keys = ON');
-  } catch (_) {}
-
-  await db.batch(
+  await adapter.batch(
     [
       `CREATE TABLE IF NOT EXISTS categories (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,6 +135,7 @@ async function initSchema(db) {
         mrp REAL DEFAULT 0,
         discount_percent REAL DEFAULT 0,
         gst_percent REAL DEFAULT 18,
+        price_tax_mode TEXT DEFAULT 'ex',
         price REAL NOT NULL DEFAULT 0,
         stock TEXT DEFAULT 'In Stock',
         custom_specs TEXT DEFAULT '{}',
@@ -107,21 +145,42 @@ async function initSchema(db) {
     'write'
   );
 
-  await runMigrations(db);
+  await runMigrations(adapter);
   initialized = true;
 }
 
 async function getDb() {
-  if (!dbInstance) {
-    dbInstance = createClientInstance();
+  if (isTursoConfigured()) {
+    if (!remoteClient) {
+      remoteClient = createClient({
+        url: process.env.TURSO_DATABASE_URL,
+        authToken: process.env.TURSO_AUTH_TOKEN,
+      });
+    }
+    const adapter = createAdapter(remoteClient, 'turso');
+    await initSchema(adapter);
+    return adapter;
   }
-  await initSchema(dbInstance);
-  return dbInstance;
+
+  if (!localSqlJsDb) {
+    const SQL = await initSqlJs();
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    localSqlJsDb = fs.existsSync(dbFile)
+      ? new SQL.Database(fs.readFileSync(dbFile))
+      : new SQL.Database();
+  }
+
+  const adapter = createAdapter(localSqlJsDb, 'sqljs');
+  await initSchema(adapter);
+  return adapter;
 }
 
-// Kept as a safe no-op so existing callers don't break if still invoked
 async function saveToDisk() {
-  return;
+  if (localSqlJsDb) {
+    saveLocalDb(localSqlJsDb);
+  }
 }
 
 module.exports = { getDb, saveToDisk };
