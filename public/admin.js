@@ -498,10 +498,10 @@ function addVariantRow(vOrSize = {}, skuArg = '', priceArg = '', stockArg = 'In 
     <div class="grid grid-cols-2 sm:grid-cols-6 gap-2 items-center">
       <input type="text" data-field="sku" value="${escapeAttr(v.sku || '')}" placeholder="Product No. / SKU"
         class="var-sku px-2 py-1.5 rounded border border-slate-700 bg-slate-900 text-white font-mono" />
-      <input type="number" step="0.01" data-field="mrp" value="${escapeAttr(displayMrp)}" placeholder="MRP ₹"
+      <input type="number" step="any" inputmode="decimal" data-field="mrp" value="${escapeAttr(displayMrp)}" placeholder="MRP ₹"
         oninput="recalculateAllVariantPrices()"
         class="px-2 py-1.5 rounded border border-slate-700 bg-slate-900 text-white font-mono" />
-      <input type="number" step="0.01" data-field="price" value="${escapeAttr(displayRate)}" placeholder="Rate ₹"
+      <input type="number" step="any" inputmode="decimal" data-field="price" value="${escapeAttr(displayRate)}" placeholder="Rate ₹"
         oninput="recalculateAllVariantPrices()"
         class="var-price px-2 py-1.5 rounded border border-slate-700 bg-slate-900 text-amber-300 font-mono" />
       <select data-field="price_tax_mode" onchange="recalculateAllVariantPrices()"
@@ -510,7 +510,7 @@ function addVariantRow(vOrSize = {}, skuArg = '', priceArg = '', stockArg = 'In 
         <option value="inc" ${taxMode === 'inc' ? 'selected' : ''}>Incl. GST (No +GST)</option>
       </select>
       <div class="flex items-center gap-1">
-        <input type="number" step="0.01" min="0" max="100" data-field="gst_percent" value="${escapeAttr(rowGst)}" placeholder="GST %"
+        <input type="number" step="any" inputmode="decimal" min="0" max="100" data-field="gst_percent" value="${escapeAttr(rowGst)}" placeholder="GST %"
           oninput="recalculateAllVariantPrices()" title="GST %"
           class="w-full px-2 py-1.5 rounded border border-slate-700 bg-slate-900 text-emerald-300 font-mono" />
         <span class="text-slate-400 font-bold">%</span>
