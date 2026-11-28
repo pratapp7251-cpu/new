@@ -29,43 +29,76 @@ function safeParseJson(val) {
   }
 }
 
-async function getAllSortedProducts({ category = 'ALL', search = '' } = {}) {
-  const db = await getDb();
-  let where = `WHERE 1=1`;
+// Lowest GST-inclusive variant price (same rule the storefront uses)
+const MIN_PRICE_SQL = `COALESCE((
+  SELECT MIN(
+    (CASE WHEN COALESCE(v.price, 0) = 0 AND v.mrp > 0 AND v.discount_percent > 0
+      THEN v.mrp * (1 - v.discount_percent / 100.0)
+      ELSE COALESCE(v.price, 0) END)
+    * (1 + COALESCE(v.gst_percent, products.gst_percent, 18) / 100.0))
+  FROM product_variants v WHERE v.product_id = products.id
+), 1e18)`;
+
+const ORDER_BY = {
+  default: 'category_name ASC, name ASC, created_at DESC, id ASC',
+  'name-asc': 'name COLLATE NOCASE ASC, id ASC',
+  'price-asc': `${MIN_PRICE_SQL} ASC, name COLLATE NOCASE ASC, id ASC`,
+  'price-desc': `${MIN_PRICE_SQL} DESC, name COLLATE NOCASE ASC, id ASC`,
+};
+
+const CATEGORY_SQL = `COALESCE(NULLIF(category_name, ''), 'Uncategorized')`;
+const BRAND_SQL = `COALESCE(NULLIF(TRIM(brand), ''), 'Taparia')`;
+
+function buildFilter({ id, category = 'ALL', subCategory = 'ALL', brand = 'ALL', search = '' }) {
+  let where = 'WHERE 1=1';
   const args = [];
+  const add = (condition, value) => {
+    where += ` AND ${condition}`;
+    args.push(value);
+  };
 
-  if (category && category !== 'ALL') {
-    where += ` AND category_name = ?`;
-    args.push(category);
-  }
+  if (id) add('id = ?', id);
+  if (category && category !== 'ALL') add(`${CATEGORY_SQL} = ?`, category);
+  if (subCategory && subCategory !== 'ALL') add('sub_category = ?', subCategory);
+  if (brand && brand !== 'ALL') add(`${BRAND_SQL} = ?`, brand);
 
-  if (search && search.trim()) {
+  const term = String(search || '').trim().toLowerCase();
+  if (term) {
+    const text = (cols) => `LOWER(${cols.map((c) => `COALESCE(${c}, '')`).join(" || ' ' || ")})`;
     where += ` AND (
-      LOWER(name) LIKE ? OR
-      LOWER(brand) LIKE ? OR
-      LOWER(sub_category) LIKE ? OR
-      LOWER(series) LIKE ? OR
-      LOWER(finish) LIKE ? OR
-      LOWER(description) LIKE ?
+      INSTR(${text(['name', 'brand', 'category_name', 'sub_category', 'series', 'finish', 'description'])}, ?) > 0
+      OR id IN (
+        SELECT product_id FROM product_variants
+        WHERE INSTR(${text(['size', 'opening', 'finish', 'packaging', 'sku', 'custom_specs'])}, ?) > 0
+      )
     )`;
-    const term = `%${search.trim().toLowerCase()}%`;
-    args.push(term, term, term, term, term, term);
+    args.push(term, term);
   }
 
-  // 2 queries in total, instead of 1 extra query for every product
+  return { where, args };
+}
+
+// Without "limit" this returns every matching product (used by the admin panel)
+async function getAllSortedProducts({ sort, limit, offset = 0, ...filters } = {}) {
+  const db = await getDb();
+  const { where, args } = buildFilter(filters);
+  const order = `ORDER BY ${Object.hasOwn(ORDER_BY, sort) ? ORDER_BY[sort] : ORDER_BY.default}`;
+  const page = limit ? 'LIMIT ? OFFSET ?' : '';
+  const pageArgs = limit ? [...args, limit, offset] : args;
+
   const [prodResult, varResult] = await Promise.all([
     db.execute({
-      sql: `SELECT * FROM products ${where} ORDER BY category_name ASC, name ASC, created_at DESC`,
-      args,
+      sql: `SELECT * FROM products ${where} ${order} ${page}`,
+      args: pageArgs,
     }),
     db.execute({
       sql: `
         SELECT product_id, size, opening, finish, packaging, sku, mrp, discount_percent, gst_percent, price_tax_mode, price, stock, custom_specs
         FROM product_variants
-        WHERE product_id IN (SELECT id FROM products ${where})
+        WHERE product_id IN (SELECT id FROM products ${where} ${limit ? `${order} ${page}` : ''})
         ORDER BY id ASC
       `,
-      args,
+      args: pageArgs,
     }),
   ]);
 
@@ -100,6 +133,30 @@ async function getAllSortedProducts({ category = 'ALL', search = '' } = {}) {
       variants,
     };
   });
+}
+
+async function countProducts(filters = {}) {
+  const db = await getDb();
+  const { where, args } = buildFilter(filters);
+  const res = await db.execute({ sql: `SELECT COUNT(*) AS total FROM products ${where}`, args });
+  return Number(rowsToObjects(res)[0]?.total) || 0;
+}
+
+// Product counts used to build the category, subcategory and brand filters
+async function getFacets() {
+  const db = await getDb();
+  const res = await db.execute(`
+    SELECT ${CATEGORY_SQL} AS category, COALESCE(sub_category, '') AS sub_category,
+           ${BRAND_SQL} AS brand_name, COUNT(*) AS total
+    FROM products
+    GROUP BY 1, 2, 3
+  `);
+  return rowsToObjects(res).map((r) => ({
+    category: r.category,
+    sub_category: r.sub_category,
+    brand: r.brand_name,
+    total: Number(r.total) || 0,
+  }));
 }
 
 async function createProduct(tool) {
@@ -228,6 +285,8 @@ async function getSortedCategories() {
 
 module.exports = {
   getAllSortedProducts,
+  countProducts,
+  getFacets,
   createProduct,
   deleteProduct,
   getSortedCategories,
