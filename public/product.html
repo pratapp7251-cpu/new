@@ -68,7 +68,7 @@
       }
 
       try {
-        const res = await fetch('/api/products');
+        const res = await fetch(`/api/products?id=${encodeURIComponent(id)}`);
         const data = await res.json();
         const product = (data.products || []).find(p => String(p.id) === String(id));
 
