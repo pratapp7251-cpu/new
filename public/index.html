@@ -42,7 +42,7 @@
       </a>
 
       <div class="flex-1 max-w-2xl flex items-center">
-        <input id="storeSearchInput" type="text" oninput="renderCatalogue()"
+        <input id="storeSearchInput" type="text" oninput="onSearchInput()"
           placeholder="Search Product, Category, Brand, Size, SKU..."
           class="w-full h-10 px-3.5 text-xs sm:text-sm bg-white border border-gray-300 rounded-l-md focus:outline-none focus:border-red-600" />
         <button type="button" onclick="renderCatalogue()"
@@ -194,6 +194,12 @@
     <!-- SQUARE BOX PRODUCT GRID -->
     <section>
       <div id="storeProductsGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5 sm:gap-4"></div>
+      <div class="flex justify-center py-5">
+        <button id="loadMoreBtn" type="button" onclick="loadMore()"
+          class="hidden px-6 py-2 rounded-md bg-gray-900 hover:bg-gray-800 text-white text-xs font-bold">
+          Load More
+        </button>
+      </div>
     </section>
 
   </main>
@@ -229,6 +235,10 @@
 
     const STATE = {
       products: [],
+      facets: [],
+      total: 0,
+      requestId: 0,
+      loading: false,
       categories: [],
       selectedCategory: 'ALL',
       selectedSubCategory: 'ALL',
@@ -238,9 +248,6 @@
     document.addEventListener('DOMContentLoaded', () => {
       loadFromBackend();
       renderCartDrawer();
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') loadFromBackend();
-      });
     });
 
     async function loadFromBackend() {
@@ -248,27 +255,27 @@
       const grid = document.getElementById('storeProductsGrid');
 
       try {
-        const [prodRes, catRes] = await Promise.all([
-          fetch('/api/products'),
+        const [facetRes, catRes] = await Promise.all([
+          fetch('/api/facets'),
           fetch('/api/categories')
         ]);
 
-        if (!prodRes.ok) throw new Error(`/api/products failed (${prodRes.status})`);
+        if (!facetRes.ok) throw new Error(`/api/facets failed (${facetRes.status})`);
 
-        const prodData = await prodRes.json();
+        const facetData = await facetRes.json();
         const catData = catRes.ok ? await catRes.json() : { categories: [] };
 
-        STATE.products = Array.isArray(prodData.products) ? prodData.products : [];
+        STATE.facets = Array.isArray(facetData.facets) ? facetData.facets : [];
         STATE.categories = Array.isArray(catData.categories) ? catData.categories : [];
 
-        document.getElementById('heroTotalProducts').textContent = STATE.products.length;
-        const distinctCats = new Set(STATE.products.map(p => p.category_name).filter(Boolean));
+        document.getElementById('heroTotalProducts').textContent = totalProductCount();
+        const distinctCats = new Set(STATE.facets.map(f => f.category));
         document.getElementById('heroTotalCategories').textContent = distinctCats.size || STATE.categories.length;
 
         renderBrandFilter();
         renderCategoryStrip();
         renderSubCategoryDropdown();
-        renderCatalogue();
+        await renderCatalogue();
       } catch (err) {
         console.error('Error loading storefront:', err);
         if (countEl) countEl.textContent = 'Error loading catalogue';
@@ -276,6 +283,67 @@
           grid.innerHTML = `<div class="col-span-full bg-white border border-red-200 rounded-lg p-6 text-xs text-red-700 font-mono">${escapeHtml(err.message)}</div>`;
         }
       }
+    }
+
+    const PAGE_SIZE = 50;
+
+    function totalProductCount() {
+      return STATE.facets.reduce((sum, f) => sum + f.total, 0);
+    }
+
+    // Fetches one batch from the server using the current search and filters
+    async function fetchProducts(append = false) {
+      const requestId = ++STATE.requestId;
+      const countEl = document.getElementById('productCountLabel');
+      const moreBtn = document.getElementById('loadMoreBtn');
+
+      const params = new URLSearchParams({
+        limit: PAGE_SIZE,
+        offset: append ? STATE.products.length : 0,
+        category: STATE.selectedCategory,
+        subCategory: STATE.selectedSubCategory,
+        brand: document.getElementById('brandFilterSelect').value,
+        search: document.getElementById('storeSearchInput').value.trim(),
+        sort: document.getElementById('sortSelect').value
+      });
+
+      STATE.loading = true;
+      moreBtn.disabled = true;
+      moreBtn.textContent = 'Loading...';
+      if (!append) countEl.textContent = 'Loading...';
+
+      try {
+        const res = await fetch(`/api/products?${params}`);
+        if (!res.ok) throw new Error(`/api/products failed (${res.status})`);
+        const data = await res.json();
+        if (requestId !== STATE.requestId) return; // a newer search has started
+
+        STATE.products = append ? STATE.products.concat(data.products) : data.products;
+        STATE.total = data.total;
+        drawProducts(append ? data.products : null);
+        moreBtn.textContent = 'Load More';
+        moreBtn.classList.toggle('hidden', STATE.products.length >= STATE.total);
+      } catch (err) {
+        if (requestId !== STATE.requestId) return;
+        console.error('Error loading products:', err);
+        countEl.textContent = 'Error loading products';
+        if (!append) {
+          STATE.products = [];
+          document.getElementById('storeProductsGrid').innerHTML =
+            `<div class="col-span-full bg-white border border-red-200 rounded-lg p-6 text-xs text-red-700 font-mono">${escapeHtml(err.message)}</div>`;
+        }
+        moreBtn.textContent = 'Retry';
+        moreBtn.classList.remove('hidden');
+      } finally {
+        if (requestId === STATE.requestId) {
+          STATE.loading = false;
+          moreBtn.disabled = false;
+        }
+      }
+    }
+
+    function loadMore() {
+      if (!STATE.loading) fetchProducts(STATE.products.length > 0);
     }
 
     function selectCategory(cat) {
@@ -305,7 +373,7 @@
       const sel = document.getElementById('brandFilterSelect');
       const currentVal = sel.value || 'ALL';
       const brands = Array.from(new Set(
-        STATE.products.map(p => (p.brand || 'Taparia').trim()).filter(Boolean)
+        STATE.facets.map(f => f.brand)
       )).sort((a, b) => a.localeCompare(b));
 
       sel.innerHTML = `<option value="ALL">All Brands (${brands.length})</option>` +
@@ -314,9 +382,8 @@
 
     function renderCategoryStrip() {
       const counts = {};
-      STATE.products.forEach(p => {
-        const cat = p.category_name || 'Uncategorized';
-        counts[cat] = (counts[cat] || 0) + 1;
+      STATE.facets.forEach(f => {
+        counts[f.category] = (counts[f.category] || 0) + f.total;
       });
 
       const cats = Array.from(new Set([
@@ -333,7 +400,7 @@
               ? 'bg-red-600 text-white border-red-600 font-bold'
               : 'bg-gray-50 text-gray-700 border-gray-200 hover:border-red-400'
           }">
-          All Products (${STATE.products.length})
+          All Products (${totalProductCount()})
         </button>` +
         cats.map(c => {
           const active = STATE.selectedCategory === c;
@@ -357,12 +424,12 @@
 
       if (STATE.selectedCategory === 'ALL') {
         Object.values(DEFAULT_SUBCATEGORIES).forEach(arr => arr.forEach(s => subSet.add(s)));
-        STATE.products.forEach(p => { if (p.sub_category) subSet.add(p.sub_category); });
+        STATE.facets.forEach(f => { if (f.sub_category) subSet.add(f.sub_category); });
       } else {
         (DEFAULT_SUBCATEGORIES[STATE.selectedCategory] || []).forEach(s => subSet.add(s));
-        STATE.products
-          .filter(p => (p.category_name || 'Uncategorized') === STATE.selectedCategory && p.sub_category)
-          .forEach(p => subSet.add(p.sub_category));
+        STATE.facets
+          .filter(f => f.category === STATE.selectedCategory && f.sub_category)
+          .forEach(f => subSet.add(f.sub_category));
       }
 
       const subs = Array.from(subSet).sort((a, b) => a.localeCompare(b));
@@ -438,62 +505,56 @@
       `;
     }
 
+    // Called when the search or a filter changes: start again from the first batch
     function renderCatalogue() {
-      const grid = document.getElementById('storeProductsGrid');
+      updateHeader();
+      document.getElementById('storeProductsGrid').innerHTML =
+        `<div class="col-span-full text-center py-10 text-xs text-gray-500">Loading products...</div>`;
+      document.getElementById('loadMoreBtn').classList.add('hidden');
+      STATE.products = [];
+      return fetchProducts();
+    }
+
+    // Wait until typing pauses before asking the server
+    let searchTimer = null;
+    function onSearchInput() {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(renderCatalogue, 350);
+    }
+
+    function updateHeader() {
       const hero = document.getElementById('heroSection');
       const resetBtn = document.getElementById('resetFilterBtn');
       const heading = document.getElementById('catalogueHeading');
 
+      const search = (document.getElementById('storeSearchInput').value || '').trim();
+      const selectedBrand = document.getElementById('brandFilterSelect').value;
+
+      const isFiltering =
+        STATE.selectedCategory !== 'ALL' ||
+        STATE.selectedSubCategory !== 'ALL' ||
+        selectedBrand !== 'ALL' ||
+        search.length > 0;
+
+      if (hero) hero.classList.toggle('hidden', isFiltering);
+      if (resetBtn) resetBtn.classList.toggle('hidden', !isFiltering);
+
+      heading.textContent = STATE.selectedCategory === 'ALL'
+        ? 'All Products'
+        : (STATE.selectedSubCategory !== 'ALL'
+            ? `${STATE.selectedCategory} › ${STATE.selectedSubCategory}`
+            : STATE.selectedCategory);
+    }
+
+    // Draws all loaded products, or only adds the new batch
+    function drawProducts(newBatch) {
+      const grid = document.getElementById('storeProductsGrid');
+
       try {
-        const search = (document.getElementById('storeSearchInput').value || '').trim().toLowerCase();
-        const selectedBrand = document.getElementById('brandFilterSelect').value;
-        const sortBy = document.getElementById('sortSelect').value;
+        const list = newBatch || STATE.products;
 
-        const isFiltering =
-          STATE.selectedCategory !== 'ALL' ||
-          STATE.selectedSubCategory !== 'ALL' ||
-          selectedBrand !== 'ALL' ||
-          search.length > 0;
-
-        if (hero) hero.classList.toggle('hidden', isFiltering);
-        if (resetBtn) resetBtn.classList.toggle('hidden', !isFiltering);
-
-        heading.textContent = STATE.selectedCategory === 'ALL'
-          ? 'All Products'
-          : (STATE.selectedSubCategory !== 'ALL'
-              ? `${STATE.selectedCategory} › ${STATE.selectedSubCategory}`
-              : STATE.selectedCategory);
-
-        let list = STATE.products.filter(p => {
-          const cat = p.category_name || 'Uncategorized';
-          const sub = p.sub_category || '';
-          const brand = p.brand || 'Taparia';
-
-          if (STATE.selectedCategory !== 'ALL' && cat !== STATE.selectedCategory) return false;
-          if (STATE.selectedSubCategory !== 'ALL' && sub !== STATE.selectedSubCategory) return false;
-          if (selectedBrand !== 'ALL' && brand !== selectedBrand) return false;
-
-          if (search) {
-            const variants = Array.isArray(p.variants) ? p.variants : [];
-            const varBlob = variants.map(v =>
-              `${v.size || ''} ${v.opening || ''} ${v.finish || ''} ${v.packaging || ''} ${v.sku || ''} ${JSON.stringify(v.custom_specs || '')}`
-            ).join(' ');
-            const hay = `${p.name} ${brand} ${cat} ${sub} ${p.series || ''} ${p.finish || ''} ${p.description || ''} ${varBlob}`.toLowerCase();
-            if (!hay.includes(search)) return false;
-          }
-
-          return true;
-        });
-
-        list = [...list].sort((a, b) => {
-          const priceA = Math.min(...((a.variants || []).map(v => computeVariantPricing(a, v).shownRate).concat(Infinity)));
-          const priceB = Math.min(...((b.variants || []).map(v => computeVariantPricing(b, v).shownRate).concat(Infinity)));
-          if (sortBy === 'price-asc') return priceA - priceB;
-          if (sortBy === 'price-desc') return priceB - priceA;
-          return String(a.name).localeCompare(String(b.name));
-        });
-
-        document.getElementById('productCountLabel').textContent = `${list.length} items`;
+        document.getElementById('productCountLabel').textContent =
+          `Showing ${STATE.products.length} of ${STATE.total} items`;
 
         if (list.length === 0) {
           grid.innerHTML = `
@@ -505,7 +566,7 @@
           return;
         }
 
-        grid.innerHTML = list.map(p => {
+        const html = list.map(p => {
           const variants = Array.isArray(p.variants) && p.variants.length
             ? p.variants
             : [{ size: 'Standard', sku: 'N/A', price: 0, stock: 'In Stock' }];
@@ -522,7 +583,7 @@
           }).join('');
 
           const imgBlock = p.image
-            ? `<img src="${escapeAttr(p.image)}" alt="${escapeAttr(p.name)}" class="w-full h-full object-contain p-3 group-hover:scale-105 transition-transform duration-200" />`
+            ? `<img loading="lazy" src="${escapeAttr(p.image)}" alt="${escapeAttr(p.name)}" class="w-full h-full object-contain p-3 group-hover:scale-105 transition-transform duration-200" />`
             : `<div class="w-full h-full flex flex-col items-center justify-center text-gray-400 text-xs bg-gray-50">
                  <span>No Image</span>
                </div>`;
@@ -578,6 +639,9 @@
             </article>
           `;
         }).join('');
+
+        if (newBatch) grid.insertAdjacentHTML('beforeend', html);
+        else grid.innerHTML = html;
       } catch (err) {
         console.error('renderCatalogue error:', err);
         grid.innerHTML = `<div class="col-span-full bg-white border border-red-200 rounded-lg p-6 text-xs text-red-700 font-mono">Render error: ${escapeHtml(err.message)}</div>`;
