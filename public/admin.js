@@ -521,12 +521,13 @@ function addVariantRow(vOrSize = {}, skuArg = '', priceArg = '', stockArg = 'In 
           <option value="Out of Stock" ${v.stock === 'Out of Stock' ? 'selected' : ''}>Out of Stock</option>
         </select>
         <button type="button" onclick="removeVariantRow(this)" title="Remove"
-          class="px-2 py-1.5 rounded bg-red-950/60 text-red-300 hover:bg-red-900 font-bold">✕</button>
+          class="var-remove px-2 py-1.5 rounded bg-red-950/60 text-red-300 hover:bg-red-900 font-bold">✕</button>
       </div>
     </div>
 
     <div class="var-gst-preview text-[11px] font-mono text-slate-400"></div>
   `;
+  addFieldLabels(row);
   container.appendChild(row);
   recalculateAllVariantPrices();
 }
@@ -581,6 +582,39 @@ function extractFirstRowTemplate() {
     stock: getVal('stock') || 'In Stock',
     custom_specs
   };
+}
+
+// Adds a caption above each variant field (visible on phones)
+function addFieldLabels(row) {
+  const names = {
+    size: 'Size', opening: 'Opening / Capacity', finish: 'Finish', packaging: 'Packaging',
+    sku: 'SKU', mrp: 'MRP ₹', price: 'Rate ₹', price_tax_mode: 'Tax mode',
+    gst_percent: 'GST %', stock: 'Stock'
+  };
+
+  row.querySelectorAll('[data-field], [data-custom-spec]').forEach(input => {
+    const caption = input.dataset.customSpec || names[input.dataset.field];
+    // GST and stock sit inside a small wrapper together with "%" or the remove button
+    const target = ['gst_percent', 'stock'].includes(input.dataset.field) ? input.parentElement : input;
+
+    const field = document.createElement('div');
+    field.className = input.dataset.field === 'stock' ? 'vfield vfield-wide' : 'vfield';
+    const label = document.createElement('span');
+    label.className = 'vlabel';
+    label.textContent = caption;
+    input.setAttribute('aria-label', caption);
+
+    target.before(field);
+    field.append(label, target);
+  });
+}
+
+// Phone view: switch between the form and the product list
+function showAdminTab(tab) {
+  document.getElementById('adminWorkspace').dataset.tab = tab;
+  document.getElementById('tabForm').classList.toggle('active', tab === 'form');
+  document.getElementById('tabList').classList.toggle('active', tab === 'list');
+  window.scrollTo({ top: 0 });
 }
 
 function syncBulkGstToggleButton() {
@@ -830,10 +864,12 @@ function editToolEntry(toolId) {
   } else {
     addVariantRow();
   }
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  showAdminTab('form');
 }
 
 async function deleteToolEntry(toolId) {
+  const name = ADMIN.tools.find(t => t.id === toolId)?.name || 'this product';
+  if (!confirm(`Delete "${name}"?`)) return;
   await fetch(`/api/products/${encodeURIComponent(toolId)}`, { method: 'DELETE' });
   await fetchProductsFromSQLite();
   showToast('Deleted from SQLite');
