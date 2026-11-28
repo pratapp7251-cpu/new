@@ -4,6 +4,8 @@ const router = express.Router();
 const cheerio = require('cheerio');
 const {
   getAllSortedProducts,
+  countProducts,
+  getFacets,
   createProduct,
   deleteProduct,
   getSortedCategories
@@ -246,9 +248,30 @@ router.get('/categories', async (req, res) => {
 
 router.get('/products', async (req, res) => {
   try {
-    const { category = 'ALL', search = '' } = req.query;
-    const products = await getAllSortedProducts({ category, search });
-    res.json({ products });
+    const { id, category, subCategory, brand, search, sort } = req.query;
+    const filters = { id, category, subCategory, brand, search };
+
+    // no limit: return everything, as before
+    if (!req.query.limit) {
+      const products = await getAllSortedProducts({ ...filters, sort });
+      return res.json({ products, total: products.length });
+    }
+
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 100);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    const [products, total] = await Promise.all([
+      getAllSortedProducts({ ...filters, sort, limit, offset }),
+      countProducts(filters)
+    ]);
+    res.json({ products, total });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/facets', async (req, res) => {
+  try {
+    res.json({ facets: await getFacets() });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
