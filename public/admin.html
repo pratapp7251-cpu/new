@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>ToolYard Admin Uploader — Multi-Brand & Spec Catalogue</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
@@ -13,6 +13,68 @@
       background-size: 12px 12px;
       background-color: #090d16;
     }
+
+    /* Captions appear only on phones */
+    .vfield { display: contents; }
+    .vlabel, #mobileTabs { display: none; }
+
+    /* ---------- Phones (iPhone 17 is 402px wide) ---------- */
+    @media (max-width: 640px) {
+      html { -webkit-text-size-adjust: 100%; }
+      body { overflow-x: clip; }
+
+      header > div { padding: calc(env(safe-area-inset-top) + 8px) 12px 8px !important; }
+      header .header-sub, header .header-badge { display: none; }
+      header a, header button { min-height: 40px; display: inline-flex; align-items: center; white-space: nowrap; }
+      header button.hidden { display: none; }
+
+      #adminWorkspace { padding: 0 10px calc(env(safe-area-inset-bottom) + 24px) !important; }
+      #adminWorkspace section { padding: 14px !important; }
+
+      /* Add product / Products tabs */
+      #mobileTabs {
+        display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+        position: sticky; top: calc(env(safe-area-inset-top) + 57px); z-index: 20;
+        background: #020617; padding: 8px 0;
+      }
+      #mobileTabs button { min-height: 44px; border-radius: 10px; background: #1e293b; font-size: 14px; font-weight: 700; color: #cbd5e1; }
+      #mobileTabs button.active { background: #f59e0b; color: #020617; }
+      #adminWorkspace[data-tab="form"] #inventorySection,
+      #adminWorkspace[data-tab="list"] #formSection { display: none; }
+
+      /* 16px text stops iOS zooming in; 44px is a comfortable tap size */
+      input:not([type="file"]):not([type="hidden"]), select, textarea {
+        font-size: 16px !important; min-height: 44px; min-width: 0; width: 100%;
+      }
+      button { min-height: 44px; touch-action: manipulation; }
+      #adminWorkspace label button, #adminWorkspace button.hover\:underline { font-size: 13px; padding: 0 4px; }
+
+      /* Input + button rows stack neatly */
+      #customCategoryBox button, #newFinishBox button, #scrapeBtn { flex-shrink: 0; }
+      .stack-mobile { flex-direction: column; align-items: stretch !important; width: 100%; }
+
+      /* Variant card */
+      .variant-row > div.grid { grid-template-columns: 1fr 1fr !important; align-items: end !important; }
+      .vfield { display: block; min-width: 0; }
+      .vlabel { display: block; font-size: 11px; color: #94a3b8; margin-bottom: 3px; }
+      .vfield-wide { grid-column: 1 / -1; }
+      .var-remove { min-width: 44px; }
+      .var-gst-preview { font-size: 12px !important; line-height: 1.5; }
+
+      /* Save button stays within reach */
+      #saveToolBtn { position: sticky; bottom: calc(env(safe-area-inset-bottom) + 8px); z-index: 10; min-height: 52px; font-size: 16px; }
+
+      /* Product table becomes cards */
+      #inventoryTable, #inventoryTable tbody, #inventoryTable tr, #inventoryTable td { display: block; width: 100%; }
+      #inventoryTable thead { display: none; }
+      #inventoryTable td { padding: 4px 12px !important; text-align: left !important; }
+      #inventoryTable tr { padding: 8px 0; }
+      #inventoryTable td .truncate { white-space: normal; max-width: none !important; font-size: 14px; }
+      #inventoryTable td > .inline-flex { display: grid; grid-template-columns: 1fr 1fr; width: 100%; gap: 8px; margin-top: 4px; }
+      #inventoryTable td > .inline-flex button { font-size: 14px; }
+
+      #toastContainer { left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 72px) !important; pointer-events: none; }
+    }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen">
@@ -21,10 +83,10 @@
   <header class="sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800">
     <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
       <div class="flex items-center gap-3">
-        <span class="px-2.5 py-1 rounded bg-amber-500 text-slate-950 font-black text-xs tracking-wider">TY ADMIN</span>
+        <span class="header-badge px-2.5 py-1 rounded bg-amber-500 text-slate-950 font-black text-xs tracking-wider">TY ADMIN</span>
         <div>
           <div class="font-bold text-sm sm:text-base leading-tight">Catalogue & Spec Manager</div>
-          <div class="text-[11px] text-slate-400">Categories • Subcategories • Brands • Custom Specs • GST & Discounts</div>
+          <div class="header-sub text-[11px] text-slate-400">Categories • Subcategories • Brands • Custom Specs • GST & Discounts</div>
         </div>
       </div>
 
@@ -64,11 +126,16 @@
   </section>
 
   <!-- Main Admin Workspace -->
-  <main id="adminWorkspace" class="hidden max-w-7xl mx-auto px-4 py-6">
+  <main id="adminWorkspace" data-tab="form" class="hidden max-w-7xl mx-auto px-4 py-6">
+    <nav id="mobileTabs">
+      <button id="tabForm" type="button" class="active" onclick="showAdminTab('form')">Add / Edit</button>
+      <button id="tabList" type="button" onclick="showAdminTab('list')">Products</button>
+    </nav>
+
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
       <!-- Left Column: Product & Variant Form -->
-      <section class="lg:col-span-6 rounded-2xl border surface-card p-5 space-y-5 shadow-lg">
+      <section id="formSection" class="lg:col-span-6 rounded-2xl border surface-card p-5 space-y-5 shadow-lg">
         <div class="flex items-center justify-between border-b border-slate-800 pb-3">
           <div>
             <span id="formModeBadge" class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 text-[10px] font-bold uppercase">
@@ -224,7 +291,7 @@
               class="cursor-pointer rounded-xl border-2 border-dashed border-slate-700 hover:border-amber-500 p-4 text-center transition">
               <img id="imagePreviewEl" src="" alt="Preview" class="hidden mx-auto max-h-32 object-contain mb-2" />
               <div id="imagePlaceholderPrompt" class="text-xs text-slate-400">
-                Click or drag & drop image here (auto-compressed & saved locally by product name)
+                Tap to take a photo or choose an image (auto-compressed)
               </div>
               <input id="toolImageFile" type="file" accept="image/*" onchange="handleImageFileSelect(event)" class="hidden" />
             </div>
@@ -242,7 +309,7 @@
                   Add fields like <span class="text-slate-200">Foot Size</span>, <span class="text-slate-200">Opening Size</span>, or <span class="text-slate-200">Jaw Capacity</span>
                 </div>
               </div>
-              <div class="flex items-center gap-1.5">
+              <div class="stack-mobile flex items-center gap-1.5">
                 <input id="newCustomColInput" type="text" placeholder="Column name (e.g. Foot Size)"
                   class="px-2.5 py-1 rounded bg-slate-900 border border-slate-700 text-xs text-white w-40" />
                 <button type="button" onclick="addCustomSpecColumn()"
@@ -259,7 +326,7 @@
             <label for="bulkSizesInput" class="block text-xs font-semibold text-slate-300">
               Quick Bulk Size Generator (Comma-separated)
             </label>
-            <div class="flex gap-2">
+            <div class="stack-mobile flex gap-2">
               <input id="bulkSizesInput" type="text" placeholder="e.g. 150mm, 200mm, 250mm or UK 6, UK 7, UK 8"
                 class="flex-1 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-500" />
               <button type="button" onclick="bulkGenerateSizeRows()"
@@ -292,7 +359,7 @@
           </div>
 
           <!-- Submit Button -->
-          <button type="submit"
+          <button id="saveToolBtn" type="submit"
             class="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-sm shadow-lg transition">
             <span id="submitBtnText">Save Tool & Publish to Storefront</span>
           </button>
@@ -300,7 +367,7 @@
       </section>
 
       <!-- Right Column: Saved SQLite Inventory -->
-      <section class="lg:col-span-6 rounded-2xl border surface-card p-5 space-y-4 shadow-lg">
+      <section id="inventorySection" class="lg:col-span-6 rounded-2xl border surface-card p-5 space-y-4 shadow-lg">
         <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
           <div class="flex items-center gap-2">
             <h2 class="text-base font-bold text-white">Saved Catalogue Items</h2>
@@ -323,7 +390,7 @@
         </div>
 
         <div class="overflow-x-auto rounded-xl border border-slate-800">
-          <table class="w-full text-left border-collapse text-xs">
+          <table id="inventoryTable" class="w-full text-left border-collapse text-xs">
             <thead class="bg-slate-900/90 text-slate-400 border-b border-slate-800">
               <tr>
                 <th class="py-2.5 px-3">Product & Brand</th>
