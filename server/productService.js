@@ -29,54 +29,18 @@ function safeParseJson(val) {
   }
 }
 
-async function ensureSchemaColumns(db) {
-  const productCols = [
-    `sub_category TEXT DEFAULT ''`,
-    `brand TEXT DEFAULT 'Taparia'`,
-    `gst_percent REAL DEFAULT 18`,
-    `discount_percent REAL DEFAULT 0`,
-  ];
-
-  for (const colDef of productCols) {
-    try {
-      await db.execute(`ALTER TABLE products ADD COLUMN ${colDef}`);
-    } catch (_) {}
-  }
-
-  const variantCols = [
-    `opening TEXT DEFAULT ''`,
-    `finish TEXT DEFAULT ''`,
-    `packaging TEXT DEFAULT ''`,
-    `mrp REAL DEFAULT 0`,
-    `discount_percent REAL DEFAULT 0`,
-    `gst_percent REAL DEFAULT 18`,
-    `price_tax_mode TEXT DEFAULT 'ex'`,
-    `price REAL DEFAULT 0`,
-    `stock TEXT DEFAULT 'In Stock'`,
-    `custom_specs TEXT DEFAULT '{}'`,
-  ];
-
-  for (const colDef of variantCols) {
-    try {
-      await db.execute(`ALTER TABLE product_variants ADD COLUMN ${colDef}`);
-    } catch (_) {}
-  }
-}
-
 async function getAllSortedProducts({ category = 'ALL', search = '' } = {}) {
   const db = await getDb();
-  await ensureSchemaColumns(db);
-
-  let sql = `SELECT * FROM products WHERE 1=1`;
+  let where = `WHERE 1=1`;
   const args = [];
 
   if (category && category !== 'ALL') {
-    sql += ` AND category_name = ?`;
+    where += ` AND category_name = ?`;
     args.push(category);
   }
 
   if (search && search.trim()) {
-    sql += ` AND (
+    where += ` AND (
       LOWER(name) LIKE ? OR
       LOWER(brand) LIKE ? OR
       LOWER(sub_category) LIKE ? OR
@@ -88,24 +52,31 @@ async function getAllSortedProducts({ category = 'ALL', search = '' } = {}) {
     args.push(term, term, term, term, term, term);
   }
 
-  sql += ` ORDER BY category_name ASC, name ASC, created_at DESC`;
-
-  const prodResult = await db.execute({ sql, args });
-  const products = rowsToObjects(prodResult);
-
-  const enriched = [];
-  for (const p of products) {
-    const varResult = await db.execute({
+  // 2 queries in total, instead of 1 extra query for every product
+  const [prodResult, varResult] = await Promise.all([
+    db.execute({
+      sql: `SELECT * FROM products ${where} ORDER BY category_name ASC, name ASC, created_at DESC`,
+      args,
+    }),
+    db.execute({
       sql: `
-        SELECT size, opening, finish, packaging, sku, mrp, discount_percent, gst_percent, price_tax_mode, price, stock, custom_specs
+        SELECT product_id, size, opening, finish, packaging, sku, mrp, discount_percent, gst_percent, price_tax_mode, price, stock, custom_specs
         FROM product_variants
-        WHERE product_id = ?
+        WHERE product_id IN (SELECT id FROM products ${where})
         ORDER BY id ASC
       `,
-      args: [p.id],
-    });
+      args,
+    }),
+  ]);
 
-    const variants = rowsToObjects(varResult).map((v) => ({
+  const byProduct = new Map();
+  for (const v of rowsToObjects(varResult)) {
+    if (!byProduct.has(v.product_id)) byProduct.set(v.product_id, []);
+    byProduct.get(v.product_id).push(v);
+  }
+
+  return rowsToObjects(prodResult).map((p) => {
+    const variants = (byProduct.get(p.id) || []).map((v) => ({
       size: v.size || 'Standard',
       opening: v.opening || '',
       finish: v.finish || '',
@@ -120,23 +91,19 @@ async function getAllSortedProducts({ category = 'ALL', search = '' } = {}) {
       custom_specs: safeParseJson(v.custom_specs),
     }));
 
-    enriched.push({
+    return {
       ...p,
       brand: p.brand || 'Taparia',
       sub_category: p.sub_category || '',
       discount_percent: Number(p.discount_percent) || 0,
       gst_percent: Number(p.gst_percent ?? 18) || 0,
       variants,
-    });
-  }
-
-  return enriched;
+    };
+  });
 }
 
 async function createProduct(tool) {
   const db = await getDb();
-  await ensureSchemaColumns(db);
-
   const id = tool.id || `tool-${Date.now()}`;
   const categoryName = tool.category || tool.category_name || 'Uncategorized';
   const subCategory = tool.sub_category || '';
@@ -239,8 +206,6 @@ async function createProduct(tool) {
 
 async function deleteProduct(id) {
   const db = await getDb();
-  await ensureSchemaColumns(db);
-
   await db.execute({
     sql: `DELETE FROM product_variants WHERE product_id = ?`,
     args: [id],
